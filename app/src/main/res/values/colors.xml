@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- StreamVibe color palette -->
+    <color name="sv_bg_deep">#FF0A0A0F</color>
+    <color name="sv_cyan">#FF00F2EA</color>
+    <color name="sv_red">#FFFF4D6D</color>
+    <color name="sv_gold">#FFFFD700</color>
+    <color name="sv_purple">#FFA29BFE</color>
+    <color name="notification_icon_bg">#FF0D0D1A</color>
+</resources>

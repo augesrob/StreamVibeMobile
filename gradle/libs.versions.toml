@@ -1,0 +1,18 @@
+[versions]
+agp = "8.7.3"
+kotlin = "2.1.0"
+hilt = "2.51.1"
+compose-bom = "2024.12.01"
+coroutines = "1.9.0"
+serialization = "1.7.3"
+
+[libraries]
+# No direct lib entries needed — all declared inline in app/build.gradle.kts
+# Kept here so the plugin aliases below resolve
+
+[plugins]
+android-application = { id = "com.android.application", version.ref = "agp" }
+kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
+kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
+kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
+hilt = { id = "com.google.dagger.hilt.android", version.ref = "hilt" }

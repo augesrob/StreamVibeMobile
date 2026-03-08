@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Base app theme — Compose handles all actual UI theming.
+         This is only needed so the manifest android:theme doesn't crash. -->
+    <style name="Theme.StreamVibe" parent="android:Theme.Material.NoTitleBar">
+        <item name="android:windowBackground">@color/sv_bg_deep</item>
+        <item name="android:statusBarColor">@color/sv_bg_deep</item>
+        <item name="android:navigationBarColor">@color/sv_bg_deep</item>
+        <item name="android:windowLightStatusBar">false</item>
+    </style>
+
+    <!-- Splash / launch theme shown before Compose loads -->
+    <style name="Theme.StreamVibe.Splash" parent="Theme.StreamVibe">
+        <item name="android:windowSplashScreenBackground">@color/sv_bg_deep</item>
+    </style>
+</resources>

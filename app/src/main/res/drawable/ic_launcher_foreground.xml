@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- StreamVibe logo foreground — simple diamond/diamond shape -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Outer diamond shape -->
+    <path
+        android:fillColor="#00F2EA"
+        android:pathData="M54,12 L96,54 L54,96 L12,54 Z" />
+
+    <!-- Inner diamond cutout (dark) -->
+    <path
+        android:fillColor="#0A0A0F"
+        android:pathData="M54,28 L80,54 L54,80 L28,54 Z" />
+
+    <!-- Center dot -->
+    <circle
+        android:fillColor="#00F2EA"
+        android:cx="54"
+        android:cy="54"
+        android:r="8" />
+</vector>

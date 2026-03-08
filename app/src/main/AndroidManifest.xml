@@ -1,0 +1,95 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!-- ── Core Permissions ── -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+
+    <!-- ── Overlay (floating widgets over TikTok / game) ── -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+
+    <!-- ── Camera (in-app camera stream with overlay) ── -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+
+    <!-- ── Screen Capture (game stream injection) ── -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+
+    <!-- ── Wake lock (keep TTS/alerts running during long streams) ── -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+
+    <!-- ── Vibration (haptic on gift alerts) ── -->
+    <uses-permission android:name="android.permission.VIBRATE" />
+
+    <!-- ── Post notifications ── -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <application
+        android:name=".StreamVibeApp"
+        android:allowBackup="false"
+        android:icon="@mipmap/ic_launcher"
+        android:label="StreamVibe Mobile"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.StreamVibe"
+        tools:targetApi="31">
+
+        <!-- ── Main Activity ── -->
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:launchMode="singleTop"
+            android:screenOrientation="portrait"
+            android:windowSoftInputMode="adjustResize">
+
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+
+            <!-- TikTok OAuth callback deep link: streamvibe://tiktok/callback -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="streamvibe" android:host="tiktok" android:path="/callback" />
+            </intent-filter>
+
+            <!-- TikTok SDK callback -->
+            <meta-data
+                android:name="com.tiktok.sdk.AppId"
+                android:value="${tikTokClientKey}" />
+        </activity>
+
+        <!-- ── Background Stream Service (keeps TTS/alerts alive while TikTok is foreground) ── -->
+        <service
+            android:name=".service.StreamService"
+            android:exported="false"
+            android:foregroundServiceType="mediaProjection|microphone" />
+
+        <!-- ── Overlay Service (floating widgets over TikTok app) ── -->
+        <service
+            android:name=".service.OverlayService"
+            android:exported="false"
+            android:permission="android.permission.SYSTEM_ALERT_WINDOW" />
+
+        <!-- ── TikTok Auth Activity (required by TikTok SDK) ── -->
+        <activity
+            android:name="com.bytedance.sdk.open.tiktok.ui.TikTokOpenApiActivity"
+            android:exported="true"
+            android:launchMode="singleTop">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data
+                    android:host="oauth"
+                    android:scheme="${tikTokClientKey}" />
+            </intent-filter>
+        </activity>
+
+    </application>
+</manifest>
