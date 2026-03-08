@@ -27,6 +27,12 @@
     <!-- ── Post notifications ── -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!-- Android 11+ package visibility — required for TikTok SDK to detect TikTok app -->
+    <queries>
+        <package android:name="com.zhiliaoapp.musically" />
+        <package android:name="com.ss.android.ugc.trill" />
+    </queries>
+
     <application
         android:name=".StreamVibeApp"
         android:allowBackup="false"

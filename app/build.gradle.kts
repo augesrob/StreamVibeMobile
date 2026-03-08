@@ -90,8 +90,8 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
 
     // TikTok Open SDK
-    implementation("com.tiktok.open.sdk:tiktok-open-sdk-core:2.3.0")
-    implementation("com.tiktok.open.sdk:tiktok-open-sdk-auth:2.3.0")
+    implementation("com.tiktok.open.sdk:tiktok-open-sdk-core:latest.release")
+    implementation("com.tiktok.open.sdk:tiktok-open-sdk-auth:latest.release")
 
     implementation("io.coil-kt:coil-compose:2.7.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")

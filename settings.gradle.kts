@@ -17,7 +17,7 @@ dependencyResolutionManagement {
         google()
         mavenCentral()
         // TikTok Open SDK
-        maven { url = uri("https://artifact.bytedance.com/repository/releases/") }
+        maven { url = uri("https://artifact.bytedance.com/repository/AwemeOpenSDK") }
     }
 }
 
