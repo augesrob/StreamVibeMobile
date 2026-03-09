@@ -17,8 +17,8 @@ android {
         applicationId = "com.streamvibe.mobile"
         minSdk = 26
         targetSdk = 35
-        versionCode = 4
-        versionName = "4.0"
+        versionCode = 5
+        versionName = "5.0"
 
         // Secrets: local.properties for dev, env vars for CI (never committed)
         val localProps = Properties().also { props ->
