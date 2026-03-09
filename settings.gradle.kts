@@ -16,8 +16,7 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
-        // TikTok Open SDK
-        maven { url = uri("https://artifact.bytedance.com/repository/AwemeOpenSDK") }
+        // TikTok SDK removed in nosdk branch — no extra repos needed
     }
 }
 

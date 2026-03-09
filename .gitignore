@@ -12,7 +12,7 @@ build/
 *.iws
 *.ipr
 
-# Keystore files
+# Keystore files — NEVER commit
 *.jks
 *.keystore
 

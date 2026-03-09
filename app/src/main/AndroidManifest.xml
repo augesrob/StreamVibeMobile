@@ -82,20 +82,7 @@
             android:exported="false"
             android:permission="android.permission.SYSTEM_ALERT_WINDOW" />
 
-        <!-- ── TikTok Auth Activity (required by TikTok SDK) ── -->
-        <activity
-            android:name="com.bytedance.sdk.open.tiktok.ui.TikTokOpenApiActivity"
-            android:exported="true"
-            android:launchMode="singleTop">
-            <intent-filter>
-                <action android:name="android.intent.action.VIEW" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.BROWSABLE" />
-                <data
-                    android:host="oauth"
-                    android:scheme="${tikTokClientKey}" />
-            </intent-filter>
-        </activity>
+        <!-- TikTok SDK Activity removed in nosdk branch -->
 
     </application>
 </manifest>

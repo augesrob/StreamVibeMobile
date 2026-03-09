@@ -89,9 +89,7 @@ dependencies {
     implementation("com.squareup.okhttp3:logging-interceptor:4.12.0")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
 
-    // TikTok Open SDK
-    implementation("com.tiktok.open.sdk:tiktok-open-sdk-core:latest.release")
-    implementation("com.tiktok.open.sdk:tiktok-open-sdk-auth:latest.release")
+    // TikTok SDK removed — auth handled via direct OAuth2 WebView + HTTP
 
     implementation("io.coil-kt:coil-compose:2.7.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")

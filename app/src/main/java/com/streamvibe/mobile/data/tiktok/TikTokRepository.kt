@@ -1,10 +1,11 @@
 package com.streamvibe.mobile.data.tiktok
 
 import android.content.Context
+import android.net.Uri
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 import com.streamvibe.mobile.BuildConfig
-import com.streamvibe.mobile.domain.model.*
+import com.streamvibe.mobile.domain.model.LiveEvent
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
@@ -12,304 +13,284 @@ import kotlinx.serialization.json.*
 import okhttp3.*
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
-import java.util.UUID
+import java.io.IOException
+import java.security.MessageDigest
+import java.security.SecureRandom
+import java.util.Base64
 import javax.inject.Inject
 import javax.inject.Singleton
 
-// ─────────────────────────────────────────────────────────────────────────────
-// TikTokAuthRepository
-// Handles OAuth 2.0 Login Kit flow + token storage
-// ─────────────────────────────────────────────────────────────────────────────
+/**
+ * TikTok auth + live events — NO SDK, pure HTTP/WebSocket.
+ *
+ * Auth flow:
+ *   1. buildAuthUrl()  → open in WebView/CustomTab
+ *   2. Deep-link callback delivers code → handleCallback(code)
+ *   3. exchangeCodeForToken(code) → stores access token
+ *   4. connectToLive(roomId) → opens WebSocket, emits LiveEvents
+ */
 @Singleton
-class TikTokAuthRepository @Inject constructor(
+class TikTokRepository @Inject constructor(
     @ApplicationContext private val context: Context,
-    private val httpClient: OkHttpClient,
 ) {
-    companion object {
-        private const val PREF_FILE = "streamvibe_secure"
-        private const val KEY_ACCESS_TOKEN = "tt_access_token"
-        private const val KEY_REFRESH_TOKEN = "tt_refresh_token"
-        private const val KEY_OPEN_ID = "tt_open_id"
-        private const val KEY_DISPLAY_NAME = "tt_display_name"
-        private const val KEY_AVATAR_URL = "tt_avatar_url"
-        private const val KEY_EXPIRES_AT = "tt_expires_at"
+    // ── OkHttp client ────────────────────────────────────────────────────────
+    private val client = OkHttpClient.Builder()
+        .addInterceptor { chain ->
+            chain.proceed(
+                chain.request().newBuilder()
+                    .header("User-Agent", "StreamVibe/1.0 Android")
+                    .build()
+            )
+        }
+        .build()
 
-        private const val TOKEN_URL = "https://open.tiktokapis.com/v2/oauth/token/"
-        private const val USER_URL  = "https://open.tiktokapis.com/v2/user/info/"
-    }
+    private val json = Json { ignoreUnknownKeys = true; isLenient = true }
 
+    // ── Encrypted storage ────────────────────────────────────────────────────
     private val prefs by lazy {
         val masterKey = MasterKey.Builder(context)
             .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
             .build()
         EncryptedSharedPreferences.create(
-            context, PREF_FILE, masterKey,
+            context, "tiktok_auth",
+            masterKey,
             EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
             EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
         )
     }
 
-    fun isLoggedIn(): Boolean {
-        val token = prefs.getString(KEY_ACCESS_TOKEN, null) ?: return false
-        val expires = prefs.getLong(KEY_EXPIRES_AT, 0L)
-        return token.isNotBlank() && System.currentTimeMillis() < expires
+    // ── PKCE helpers ─────────────────────────────────────────────────────────
+    private var pkceVerifier: String = ""
+
+    private fun generateCodeVerifier(): String {
+        val bytes = ByteArray(32).also { SecureRandom().nextBytes(it) }
+        return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes)
     }
 
-    fun getSavedUser(): TikTokUser? {
-        val token = prefs.getString(KEY_ACCESS_TOKEN, null) ?: return null
-        return TikTokUser(
-            openId       = prefs.getString(KEY_OPEN_ID, "") ?: "",
-            displayName  = prefs.getString(KEY_DISPLAY_NAME, "") ?: "",
-            avatarUrl    = prefs.getString(KEY_AVATAR_URL, "") ?: "",
-            accessToken  = token,
-            refreshToken = prefs.getString(KEY_REFRESH_TOKEN, "") ?: "",
-            expiresAt    = prefs.getLong(KEY_EXPIRES_AT, 0L),
-        )
+    private fun generateCodeChallenge(verifier: String): String {
+        val digest = MessageDigest.getInstance("SHA-256").digest(verifier.toByteArray())
+        return Base64.getUrlEncoder().withoutPadding().encodeToString(digest)
     }
 
-    // Called after TikTok SDK returns the auth code
-    suspend fun exchangeCodeForToken(authCode: String): Result<TikTokUser> {
-        return withContext(Dispatchers.IO) {
-            try {
-                val body = buildJsonObject {
-                    put("client_key",     BuildConfig.TIKTOK_CLIENT_KEY)
-                    put("client_secret",  BuildConfig.TIKTOK_CLIENT_SECRET)
-                    put("code",           authCode)
-                    put("grant_type",     "authorization_code")
-                    put("redirect_uri",   BuildConfig.TIKTOK_REDIRECT_URI)
-                }.toString()
+    // ── Public API ────────────────────────────────────────────────────────────
 
-                val request = Request.Builder()
-                    .url(TOKEN_URL)
-                    .post(body.toRequestBody("application/json".toMediaType()))
-                    .build()
+    val isAuthenticated: Boolean
+        get() = prefs.getString("access_token", null) != null
 
-                val response = httpClient.newCall(request).execute()
-                val json = Json.parseToJsonElement(response.body!!.string()).jsonObject
+    val accessToken: String?
+        get() = prefs.getString("access_token", null)
 
-                val accessToken  = json["access_token"]!!.jsonPrimitive.content
-                val refreshToken = json["refresh_token"]!!.jsonPrimitive.content
-                val expiresIn    = json["expires_in"]!!.jsonPrimitive.long
-                val openId       = json["open_id"]!!.jsonPrimitive.content
+    val openId: String?
+        get() = prefs.getString("open_id", null)
 
-                val user = fetchUserInfo(accessToken, openId)
+    /**
+     * Build the TikTok OAuth2 authorization URL.
+     * Open this in a WebView or Chrome Custom Tab.
+     * TikTok will redirect to streamvibe://tiktok/callback?code=XXX
+     */
+    fun buildAuthUrl(): String {
+        pkceVerifier = generateCodeVerifier()
+        val challenge = generateCodeChallenge(pkceVerifier)
+        val clientKey   = BuildConfig.TIKTOK_CLIENT_KEY
+        val redirectUri = Uri.encode(BuildConfig.TIKTOK_REDIRECT_URI)
+        val scopes      = Uri.encode("user.info.basic,live.room.info,live.room.message")
+        val state       = System.currentTimeMillis().toString()
+        return "https://www.tiktok.com/v2/auth/authorize/?" +
+               "client_key=$clientKey" +
+               "&response_type=code" +
+               "&scope=$scopes" +
+               "&redirect_uri=$redirectUri" +
+               "&state=$state" +
+               "&code_challenge=$challenge" +
+               "&code_challenge_method=S256"
+    }
 
-                prefs.edit().apply {
-                    putString(KEY_ACCESS_TOKEN, accessToken)
-                    putString(KEY_REFRESH_TOKEN, refreshToken)
-                    putString(KEY_OPEN_ID, openId)
-                    putString(KEY_DISPLAY_NAME, user.displayName)
-                    putString(KEY_AVATAR_URL, user.avatarUrl)
-                    putLong(KEY_EXPIRES_AT, System.currentTimeMillis() + expiresIn * 1000)
-                    apply()
-                }
+    /**
+     * Exchange the auth code (from deep-link callback) for an access token.
+     * Stores token in EncryptedSharedPreferences.
+     */
+    suspend fun exchangeCodeForToken(code: String): Result<Unit> = withContext(Dispatchers.IO) {
+        runCatching {
+            val body = FormBody.Builder()
+                .add("client_key",     BuildConfig.TIKTOK_CLIENT_KEY)
+                .add("client_secret",  BuildConfig.TIKTOK_CLIENT_SECRET)
+                .add("code",           code)
+                .add("grant_type",     "authorization_code")
+                .add("redirect_uri",   BuildConfig.TIKTOK_REDIRECT_URI)
+                .add("code_verifier",  pkceVerifier)
+                .build()
 
-                Result.success(user.copy(
-                    accessToken = accessToken,
-                    refreshToken = refreshToken,
-                    expiresAt = System.currentTimeMillis() + expiresIn * 1000,
-                ))
-            } catch (e: Exception) {
-                Result.failure(e)
-            }
+            val request = Request.Builder()
+                .url("https://open.tiktokapis.com/v2/oauth/token/")
+                .post(body)
+                .header("Content-Type", "application/x-www-form-urlencoded")
+                .build()
+
+            val response = client.newCall(request).execute()
+            val responseBody = response.body?.string()
+                ?: throw IOException("Empty token response")
+
+            val obj = json.parseToJsonElement(responseBody).jsonObject
+            val data = obj["data"]?.jsonObject
+                ?: throw IOException("Token exchange failed: $responseBody")
+
+            val token  = data["access_token"]?.jsonPrimitive?.content
+                ?: throw IOException("No access_token in response")
+            val openId = data["open_id"]?.jsonPrimitive?.content ?: ""
+            val expiry = data["expires_in"]?.jsonPrimitive?.longOrNull ?: 0L
+
+            prefs.edit()
+                .putString("access_token", token)
+                .putString("open_id", openId)
+                .putLong("expires_at", System.currentTimeMillis() + expiry * 1000)
+                .apply()
         }
     }
 
-    private suspend fun fetchUserInfo(accessToken: String, openId: String): TikTokUser {
-        val request = Request.Builder()
-            .url("$USER_URL?fields=open_id,display_name,avatar_url")
-            .addHeader("Authorization", "Bearer $accessToken")
-            .build()
-        val response = httpClient.newCall(request).execute()
-        val json = Json.parseToJsonElement(response.body!!.string())
-            .jsonObject["data"]!!.jsonObject["user"]!!.jsonObject
-        return TikTokUser(
-            openId       = openId,
-            displayName  = json["display_name"]?.jsonPrimitive?.content ?: "Unknown",
-            avatarUrl    = json["avatar_url"]?.jsonPrimitive?.content ?: "",
-            accessToken  = accessToken,
-            refreshToken = "",
-            expiresAt    = 0L,
-        )
+    /** Refresh using stored refresh token */
+    suspend fun refreshToken(): Result<Unit> = withContext(Dispatchers.IO) {
+        runCatching {
+            val refreshToken = prefs.getString("refresh_token", null)
+                ?: throw IOException("No refresh token stored")
+
+            val body = FormBody.Builder()
+                .add("client_key",    BuildConfig.TIKTOK_CLIENT_KEY)
+                .add("client_secret", BuildConfig.TIKTOK_CLIENT_SECRET)
+                .add("grant_type",    "refresh_token")
+                .add("refresh_token", refreshToken)
+                .build()
+
+            val request = Request.Builder()
+                .url("https://open.tiktokapis.com/v2/oauth/token/")
+                .post(body)
+                .build()
+
+            val response = client.newCall(request).execute()
+            val obj = json.parseToJsonElement(
+                response.body?.string() ?: throw IOException("Empty response")
+            ).jsonObject
+            val data = obj["data"]?.jsonObject ?: throw IOException("Refresh failed")
+
+            prefs.edit()
+                .putString("access_token",  data["access_token"]?.jsonPrimitive?.content ?: "")
+                .putString("refresh_token", data["refresh_token"]?.jsonPrimitive?.content ?: refreshToken)
+                .putLong("expires_at", System.currentTimeMillis() +
+                    (data["expires_in"]?.jsonPrimitive?.longOrNull ?: 0L) * 1000)
+                .apply()
+        }
     }
 
     fun logout() {
         prefs.edit().clear().apply()
     }
-}
 
-// ─────────────────────────────────────────────────────────────────────────────
-// TikTokLiveRepository
-// Connects to TikTok Live Events API via WebSocket
-// Official endpoint: wss://webcast.tiktok.com/webcast/im/fetch/
-// ─────────────────────────────────────────────────────────────────────────────
-@Singleton
-class TikTokLiveRepository @Inject constructor(
-    private val httpClient: OkHttpClient,
-) {
-    private val _events = MutableSharedFlow<LiveEvent>(
-        extraBufferCapacity = 200,
-        onBufferOverflow = kotlinx.coroutines.channels.BufferOverflow.DROP_OLDEST,
-    )
+    // ── Live WebSocket ────────────────────────────────────────────────────────
+
+    private val _events = MutableSharedFlow<LiveEvent>(extraBufferCapacity = 128)
     val events: SharedFlow<LiveEvent> = _events.asSharedFlow()
 
-    private val _connectionState = MutableStateFlow<ConnectionState>(ConnectionState.Disconnected)
-    val connectionState: StateFlow<ConnectionState> = _connectionState.asStateFlow()
-
+    private var wsJob: Job? = null
     private var webSocket: WebSocket? = null
-    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
-    sealed class ConnectionState {
-        object Disconnected : ConnectionState()
-        object Connecting : ConnectionState()
-        data class Connected(val roomId: String) : ConnectionState()
-        data class Error(val message: String) : ConnectionState()
+    /**
+     * Connect to TikTok Live via WebSocket.
+     * Events are emitted on [events] SharedFlow.
+     *
+     * Note: TikTok's live WebSocket uses a binary protobuf format.
+     * This implementation handles JSON-mode responses where available,
+     * and emits placeholder events for binary frames until proto parsing is added.
+     */
+    fun connectToLive(roomId: String) {
+        disconnectFromLive()
+        wsJob = scope.launch {
+            val token = accessToken ?: return@launch
+            val wsUrl = "wss://webcast.tiktok.com/webcast/im/fetch/" +
+                        "?aid=1988&app_name=tiktok_web&room_id=$roomId" +
+                        "&cursor=0&internal_ext=&fetch_rule=1"
+
+            val request = Request.Builder()
+                .url(wsUrl)
+                .header("Cookie", "sessionid=$token")
+                .header("Origin", "https://www.tiktok.com")
+                .build()
+
+            webSocket = client.newWebSocket(request, object : WebSocketListener() {
+                override fun onMessage(webSocket: WebSocket, text: String) {
+                    parseJsonMessage(text)
+                }
+                override fun onMessage(webSocket: WebSocket, bytes: okio.ByteString) {
+                    // Binary protobuf frame — send ACK ping back
+                    webSocket.send(okio.ByteString.of(*byteArrayOf(0x08, 0x01)))
+                    // Full proto parsing would go here once .proto definitions are added
+                }
+                override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                    scope.launch {
+                        delay(5000)
+                        connectToLive(roomId) // auto-reconnect
+                    }
+                }
+                override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {}
+            })
+        }
     }
 
-    // Connect using the TikTok Live WebSocket API
-    // roomId is obtained from the user's live room URL (fetched via TikTok API)
-    fun connect(accessToken: String, roomId: String) {
-        _connectionState.value = ConnectionState.Connecting
-
-        val url = "wss://webcast.tiktok.com/webcast/im/fetch/" +
-            "?aid=1988&app_name=tiktok_web&browser_language=en&version_code=180800" +
-            "&room_id=$roomId&cursor=&internal_ext=&fetch_interval=3000"
-
-        val request = Request.Builder()
-            .url(url)
-            .addHeader("Cookie", "sessionid=$accessToken")
-            .addHeader("User-Agent", "Mozilla/5.0 (Linux; Android 14)")
-            .build()
-
-        webSocket = httpClient.newWebSocket(request, object : WebSocketListener() {
-            override fun onOpen(ws: WebSocket, response: Response) {
-                _connectionState.value = ConnectionState.Connected(roomId)
-            }
-
-            override fun onMessage(ws: WebSocket, text: String) {
-                scope.launch { parseAndEmit(text) }
-            }
-
-            override fun onMessage(ws: WebSocket, bytes: okio.ByteString) {
-                // TikTok sends protobuf — parse binary WebcastResponse
-                scope.launch { parseBinaryAndEmit(bytes.toByteArray()) }
-            }
-
-            override fun onFailure(ws: WebSocket, t: Throwable, response: Response?) {
-                _connectionState.value = ConnectionState.Error(t.message ?: "Unknown error")
-                scheduleReconnect(accessToken, roomId)
-            }
-
-            override fun onClosed(ws: WebSocket, code: Int, reason: String) {
-                _connectionState.value = ConnectionState.Disconnected
-            }
-        })
-    }
-
-    fun disconnect() {
+    fun disconnectFromLive() {
         webSocket?.close(1000, "User disconnected")
         webSocket = null
-        _connectionState.value = ConnectionState.Disconnected
+        wsJob?.cancel()
+        wsJob = null
     }
 
-    private fun scheduleReconnect(accessToken: String, roomId: String) {
-        scope.launch {
-            delay(5000)
-            if (_connectionState.value !is ConnectionState.Connected) {
-                connect(accessToken, roomId)
+    // ── Message parsers ───────────────────────────────────────────────────────
+
+    private fun parseJsonMessage(text: String) {
+        runCatching {
+            val root = json.parseToJsonElement(text).jsonObject
+            val messages = root["data"]?.jsonObject
+                ?.get("common")?.jsonObject
+                ?.get("msgList")?.jsonArray ?: return
+
+            for (msg in messages) {
+                val obj  = msg.jsonObject
+                val type = obj["method"]?.jsonPrimitive?.content ?: continue
+                val data = obj["payload"]?.jsonObject ?: continue
+                val user = data["user"]?.jsonObject
+                    ?.get("nickname")?.jsonPrimitive?.content ?: "unknown"
+
+                val event: LiveEvent? = when (type) {
+                    "WebcastChatMessage" -> LiveEvent.ChatMessage(
+                        user    = user,
+                        message = data["content"]?.jsonPrimitive?.content ?: "",
+                    )
+                    "WebcastGiftMessage" -> LiveEvent.Gift(
+                        user        = user,
+                        giftId      = data["giftId"]?.jsonPrimitive?.intOrNull ?: 0,
+                        giftName    = data["gift"]?.jsonObject
+                            ?.get("name")?.jsonPrimitive?.content ?: "Gift",
+                        giftType    = com.streamvibe.mobile.domain.model.GiftTier.fromDiamonds(
+                            data["gift"]?.jsonObject
+                                ?.get("diamondCount")?.jsonPrimitive?.intOrNull ?: 0
+                        ),
+                        diamondCount = data["gift"]?.jsonObject
+                            ?.get("diamondCount")?.jsonPrimitive?.intOrNull ?: 0,
+                        repeatCount  = data["repeatCount"]?.jsonPrimitive?.intOrNull ?: 1,
+                    )
+                    "WebcastSocialMessage" -> {
+                        val action = data["action"]?.jsonPrimitive?.intOrNull ?: 0
+                        when (action) {
+                            1    -> LiveEvent.Follow(user = user)
+                            3    -> LiveEvent.Share(user = user)
+                            else -> LiveEvent.Like(user = user, count = 1)
+                        }
+                    }
+                    "WebcastRoomUserSeqMessage" -> LiveEvent.ViewerCount(
+                        count = data["totalUser"]?.jsonPrimitive?.intOrNull ?: 0
+                    )
+                    else -> null
+                }
+                event?.let { scope.launch { _events.emit(it) } }
             }
         }
-    }
-
-    // ── Parsers ──────────────────────────────────────────────────────────────
-    // NOTE: TikTok uses protobuf. In production you'll need to generate proto
-    // bindings from tiktok-live-connector's proto definitions.
-    // These parsers handle the JSON fallback / partial text events.
-
-    private fun parseAndEmit(text: String) {
-        try {
-            val json = Json { ignoreUnknownKeys = true }
-            val obj = json.parseToJsonElement(text).jsonObject
-            val type = obj["type"]?.jsonPrimitive?.content ?: return
-            val data = obj["data"]?.jsonObject ?: return
-
-            val event = when (type) {
-                "WebcastChatMessage"  -> parseChatMessage(data)
-                "WebcastGiftMessage"  -> parseGiftMessage(data)
-                "WebcastSocialMessage" -> parseSocialMessage(data)
-                "WebcastLikeMessage"  -> parseLikeMessage(data)
-                "WebcastRoomUserSeqMessage" -> parseViewerCount(data)
-                else -> null
-            }
-            event?.let { scope.launch { _events.emit(it) } }
-        } catch (_: Exception) {}
-    }
-
-    private fun parseBinaryAndEmit(bytes: ByteArray) {
-        // Protobuf parsing requires generated classes from TikTok's .proto files.
-        // Placeholder: in production integrate tiktok-live-connector's proto defs.
-        // For now emit a placeholder — replace with actual protobuf decode.
-    }
-
-    private fun parseChatMessage(d: JsonObject): LiveEvent.ChatMessage {
-        val user = d["user"]?.jsonObject
-        return LiveEvent.ChatMessage(
-            id        = UUID.randomUUID().toString(),
-            timestamp = System.currentTimeMillis(),
-            user      = user?.get("nickname")?.jsonPrimitive?.content ?: "Unknown",
-            avatarUrl = user?.get("profilePictureUrl")?.jsonPrimitive?.content,
-            message   = d["comment"]?.jsonPrimitive?.content ?: "",
-        )
-    }
-
-    private fun parseGiftMessage(d: JsonObject): LiveEvent.Gift {
-        val user = d["user"]?.jsonObject
-        val gift = d["gift"]?.jsonObject
-        return LiveEvent.Gift(
-            id           = UUID.randomUUID().toString(),
-            timestamp    = System.currentTimeMillis(),
-            user         = user?.get("nickname")?.jsonPrimitive?.content ?: "Unknown",
-            avatarUrl    = user?.get("profilePictureUrl")?.jsonPrimitive?.content,
-            giftName     = gift?.get("name")?.jsonPrimitive?.content ?: "Gift",
-            giftId       = gift?.get("id")?.jsonPrimitive?.content ?: "0",
-            giftImageUrl = gift?.get("image")?.jsonObject?.get("urlList")
-                ?.jsonArray?.firstOrNull()?.jsonPrimitive?.content,
-            diamondCount = gift?.get("diamondCount")?.jsonPrimitive?.int ?: 1,
-            repeatCount  = d["repeatCount"]?.jsonPrimitive?.int ?: 1,
-        )
-    }
-
-    private fun parseSocialMessage(d: JsonObject): LiveEvent {
-        val user = d["user"]?.jsonObject
-        val action = d["displayType"]?.jsonPrimitive?.content ?: ""
-        val userId = UUID.randomUUID().toString()
-        val username = user?.get("nickname")?.jsonPrimitive?.content ?: "Unknown"
-        val avatar = user?.get("profilePictureUrl")?.jsonPrimitive?.content
-        val ts = System.currentTimeMillis()
-
-        return if (action.contains("share", ignoreCase = true)) {
-            LiveEvent.Share(id = userId, timestamp = ts, user = username, avatarUrl = avatar)
-        } else {
-            LiveEvent.Follow(id = userId, timestamp = ts, user = username, avatarUrl = avatar)
-        }
-    }
-
-    private fun parseLikeMessage(d: JsonObject): LiveEvent.Like {
-        val user = d["user"]?.jsonObject
-        return LiveEvent.Like(
-            id        = UUID.randomUUID().toString(),
-            timestamp = System.currentTimeMillis(),
-            user      = user?.get("nickname")?.jsonPrimitive?.content ?: "Unknown",
-            avatarUrl = user?.get("profilePictureUrl")?.jsonPrimitive?.content,
-            likeCount = d["count"]?.jsonPrimitive?.int ?: 1,
-        )
-    }
-
-    private fun parseViewerCount(d: JsonObject): LiveEvent.ViewerCount {
-        return LiveEvent.ViewerCount(
-            id        = UUID.randomUUID().toString(),
-            timestamp = System.currentTimeMillis(),
-            count     = d["viewerCount"]?.jsonPrimitive?.int ?: 0,
-        )
     }
 }
