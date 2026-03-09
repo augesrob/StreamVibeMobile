@@ -27,13 +27,8 @@ android {
         }
         fun secret(key: String): String = System.getenv(key) ?: localProps.getProperty(key, "")
 
-        val tikKey = secret("TIKTOK_CLIENT_KEY")
-        manifestPlaceholders["tikTokClientKey"] = tikKey
-        buildConfigField("String", "TIKTOK_CLIENT_KEY",    "\"${tikKey}\"")
-        buildConfigField("String", "TIKTOK_CLIENT_SECRET", "\"${secret("TIKTOK_CLIENT_SECRET")}\"")
-        buildConfigField("String", "TIKTOK_REDIRECT_URI",  "\"streamvibe://tiktok/callback\"")
-        buildConfigField("String", "ELEVENLABS_API_KEY",   "\"${secret("ELEVENLABS_API_KEY")}\"")
-        buildConfigField("String", "CLAUDE_API_KEY",       "\"${secret("ANTHROPIC_API_KEY")}\"")
+        buildConfigField("String", "ELEVENLABS_API_KEY", "\"${secret("ELEVENLABS_API_KEY")}\"")
+        buildConfigField("String", "CLAUDE_API_KEY",      "\"${secret("ANTHROPIC_API_KEY")}\"")
     }
 
     signingConfigs {
