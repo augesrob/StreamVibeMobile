@@ -9,14 +9,6 @@ plugins {
     kotlin("kapt")
 }
 
-// Read API keys from local.properties (never commit these)
-val localProps = Properties().apply {
-    val f = rootProject.file("local.properties")
-    if (f.exists()) load(f.inputStream())
-}
-fun localProp(key: String, fallback: String = "") =
-    localProps.getProperty(key, fallback).ifBlank { fallback }
-
 android {
     namespace = "com.streamvibe.mobile"
     compileSdk = 35
@@ -26,21 +18,38 @@ android {
         minSdk = 26
         targetSdk = 35
         versionCode = 1
-        versionName = "1.0.0"
+        versionName = "1.0"
 
-        val tikKey = localProp("tiktok.client.key", "PLACEHOLDER")
+        // Secrets: local.properties for dev, env vars for CI (never committed)
+        val localProps = Properties().also { props ->
+            val f = rootProject.file("local.properties")
+            if (f.exists()) props.load(f.inputStream())
+        }
+        fun secret(key: String): String = System.getenv(key) ?: localProps.getProperty(key, "")
+
+        val tikKey = secret("TIKTOK_CLIENT_KEY")
         manifestPlaceholders["tikTokClientKey"] = tikKey
         buildConfigField("String", "TIKTOK_CLIENT_KEY",    "\"${tikKey}\"")
-        buildConfigField("String", "TIKTOK_CLIENT_SECRET", "\"${localProp("tiktok.client.secret")}\"")
+        buildConfigField("String", "TIKTOK_CLIENT_SECRET", "\"${secret("TIKTOK_CLIENT_SECRET")}\"")
         buildConfigField("String", "TIKTOK_REDIRECT_URI",  "\"streamvibe://tiktok/callback\"")
-        buildConfigField("String", "ELEVENLABS_API_KEY",   "\"${localProp("elevenlabs.api.key")}\"")
-        buildConfigField("String", "CLAUDE_API_KEY",       "\"${localProp("anthropic.api.key")}\"")
+        buildConfigField("String", "ELEVENLABS_API_KEY",   "\"${secret("ELEVENLABS_API_KEY")}\"")
+        buildConfigField("String", "CLAUDE_API_KEY",       "\"${secret("ANTHROPIC_API_KEY")}\"")
+    }
+
+    signingConfigs {
+        create("release") {
+            storeFile = file("streamvibe.keystore")
+            storePassword = System.getenv("KEYSTORE_PASSWORD") ?: "streamvibe2024"
+            keyAlias = System.getenv("KEY_ALIAS") ?: "streamvibe"
+            keyPassword = System.getenv("KEY_PASSWORD") ?: "streamvibe2024"
+        }
     }
 
     buildTypes {
         release {
             isMinifyEnabled = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            signingConfig = signingConfigs.getByName("release")
         }
     }
 
@@ -88,8 +97,6 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("com.squareup.okhttp3:logging-interceptor:4.12.0")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
-
-    // TikTok SDK removed — auth handled via direct OAuth2 WebView + HTTP
 
     implementation("io.coil-kt:coil-compose:2.7.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")

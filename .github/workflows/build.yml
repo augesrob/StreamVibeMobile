@@ -1,92 +1,97 @@
-name: Build APK
+name: Build & Release APK
 
 on:
   push:
-    branches: [ main ]
-  pull_request:
-    branches: [ main ]
-  workflow_dispatch:   # lets you trigger manually from GitHub UI
+    branches: [ nosdk ]
+    paths-ignore:
+      - 'app/build.gradle.kts'
+  workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   build:
-    name: Build Debug & Release APK
     runs-on: ubuntu-latest
 
     steps:
-      # ── 1. Checkout ──────────────────────────────────────────────────────────
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
 
-      # ── 2. Java 17 ───────────────────────────────────────────────────────────
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
           java-version: '17'
           distribution: 'temurin'
-          cache: gradle
 
-      # ── 3. Inject secrets into local.properties ───────────────────────────────
-      #    Add these in GitHub → Settings → Secrets → Actions:
-      #      TIKTOK_CLIENT_KEY, TIKTOK_CLIENT_SECRET,
-      #      ELEVENLABS_API_KEY, ANTHROPIC_API_KEY,
-      #      KEYSTORE_BASE64, KEYSTORE_PASSWORD, KEY_ALIAS, KEY_PASSWORD
-      - name: Create local.properties from secrets
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ hashFiles('**/*.gradle.kts', '**/gradle-wrapper.properties') }}
+          restore-keys: gradle-
+
+      - name: Decode keystore
         run: |
-          cat > local.properties << EOF
-          tiktok.client.key=${{ secrets.TIKTOK_CLIENT_KEY }}
-          tiktok.client.secret=${{ secrets.TIKTOK_CLIENT_SECRET }}
-          elevenlabs.api.key=${{ secrets.ELEVENLABS_API_KEY }}
-          anthropic.api.key=${{ secrets.ANTHROPIC_API_KEY }}
-          EOF
+          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > app/streamvibe.keystore
 
-      # ── 4. Gradle permission ──────────────────────────────────────────────────
-      - name: Grant execute permission for gradlew
+      - name: Get current versionCode
+        id: version
+        run: |
+          CURRENT=$(grep 'versionCode' app/build.gradle.kts | grep -o '[0-9]*')
+          NEW=$((CURRENT + 1))
+          echo "current=$CURRENT" >> $GITHUB_OUTPUT
+          echo "new=$NEW" >> $GITHUB_OUTPUT
+          echo "tag=v$NEW" >> $GITHUB_OUTPUT
+
+      - name: Bump versionCode in build.gradle.kts
+        run: |
+          sed -i "s/versionCode = ${{ steps.version.outputs.current }}/versionCode = ${{ steps.version.outputs.new }}/" app/build.gradle.kts
+          sed -i "s/versionName = \".*\"/versionName = \"${{ steps.version.outputs.new }}.0\"/" app/build.gradle.kts
+
+      - name: Commit version bump
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add app/build.gradle.kts
+          git commit -m "chore: bump versionCode to ${{ steps.version.outputs.new }} [skip ci]"
+          git push
+
+      - name: Make gradlew executable
         run: chmod +x gradlew
 
-      # ── 5. Build DEBUG APK ────────────────────────────────────────────────────
-      - name: Build Debug APK
-        run: ./gradlew assembleDebug --no-daemon --stacktrace
-
-      # ── 6. Sign & Build RELEASE APK ──────────────────────────────────────────
-      - name: Decode keystore
-        if: github.ref == 'refs/heads/main'
-        run: |
-          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 --decode > app/streamvibe.keystore
-
       - name: Build Release APK
-        if: github.ref == 'refs/heads/main'
+        env:
+          TIKTOK_CLIENT_KEY: ${{ secrets.TIKTOK_CLIENT_KEY }}
+          TIKTOK_CLIENT_SECRET: ${{ secrets.TIKTOK_CLIENT_SECRET }}
+          ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: ./gradlew assembleRelease
+
+      - name: Rename APK
         run: |
-          ./gradlew assembleRelease \
-            -Pandroid.injected.signing.store.file=$GITHUB_WORKSPACE/app/streamvibe.keystore \
-            -Pandroid.injected.signing.store.password=${{ secrets.KEYSTORE_PASSWORD }} \
-            -Pandroid.injected.signing.key.alias=${{ secrets.KEY_ALIAS }} \
-            -Pandroid.injected.signing.key.password=${{ secrets.KEY_PASSWORD }} \
-            --no-daemon --stacktrace
+          mv app/build/outputs/apk/release/app-release.apk \
+             app/build/outputs/apk/release/streamvibe-${{ steps.version.outputs.tag }}.apk
 
-      # ── 7. Upload Debug APK artifact ──────────────────────────────────────────
-      - name: Upload Debug APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: StreamVibe-Debug-${{ github.run_number }}
-          path: app/build/outputs/apk/debug/*.apk
-          retention-days: 30
-
-      # ── 8. Upload Release APK artifact ────────────────────────────────────────
-      - name: Upload Release APK
-        if: github.ref == 'refs/heads/main'
-        uses: actions/upload-artifact@v4
-        with:
-          name: StreamVibe-Release-${{ github.run_number }}
-          path: app/build/outputs/apk/release/*.apk
-          retention-days: 90
-
-      # ── 9. Create GitHub Release on version tag (optional) ────────────────────
-      #    Push a tag like v1.0.0 to auto-create a GitHub Release with the APK
       - name: Create GitHub Release
-        if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: |
-            app/build/outputs/apk/release/*.apk
-            app/build/outputs/apk/debug/*.apk
-          generate_release_notes: true
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: "StreamVibe ${{ steps.version.outputs.tag }}"
+          body: |
+            Auto-built from commit ${{ github.sha }}
+            **Changes:** ${{ github.event.head_commit.message }}
+          files: app/build/outputs/apk/release/streamvibe-${{ steps.version.outputs.tag }}.apk
+          draft: false
+          prerelease: false
