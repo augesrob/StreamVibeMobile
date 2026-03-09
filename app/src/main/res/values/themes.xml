@@ -2,7 +2,7 @@
 <resources>
     <!-- Base app theme — Compose handles all actual UI theming.
          This is only needed so the manifest android:theme doesn't crash. -->
-    <style name="Theme.StreamVibe" parent="android:Theme.Material.NoTitleBar">
+    <style name="Theme.StreamVibe" parent="Theme.Material3.DayNight.NoActionBar">
         <item name="android:windowBackground">@color/sv_bg_deep</item>
         <item name="android:statusBarColor">@color/sv_bg_deep</item>
         <item name="android:navigationBarColor">@color/sv_bg_deep</item>
