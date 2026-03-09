@@ -1,214 +1,185 @@
-# StreamVibe Mobile — Alerts & TTS
+# StreamVibe Mobile — `nosdk` Branch
 
-A TikTok live streaming companion app for the StreamVibe / drvn-empire project.
+> **Standalone APK** — no TikTok SDK, no StreamVibe backend required.
+> Works as a fully self-contained Android app.
+
+---
+
+## What is this branch?
+
+The `main` branch uses the TikTok Open SDK (Maven dependency from ByteDance).
+This `nosdk` branch removes that dependency entirely and replaces it with:
+
+- **Direct OAuth2 PKCE auth** via the user's browser + deep link callback
+- **Direct WebSocket** connection to `webcast.tiktok.com`
+- **Pure OkHttp** — no third-party TikTok library needed
+
+This means the APK builds without needing TikTok developer approval, a Play Store
+listing, or any SDK registration. You still need a TikTok developer app client key
+to authenticate users.
+
+---
 
 ## Features
 
-| Feature | Details |
+| Feature | Status |
 |---|---|
-| **TikTok Auth** | Login Kit OAuth 2.0 — no passwords stored, uses EncryptedSharedPreferences |
-| **Live Events** | WebSocket connection to TikTok Live — gifts, follows, chat, likes, shares, viewer count |
-| **TTS Engine** | Android built-in + ElevenLabs AI voices |
-| **Claude Filter** | Pre-speak sanitizer: removes spam, normalizes emojis, skips gibberish |
-| **TTS Queue** | Skip, pause, clear, max queue size, priority levels (Legendary > Epic > Rare > Common) |
-| **Per-User Voices** | Assign specific ElevenLabs voice to any username |
-| **Word Blocklist** | Block any word/phrase from being spoken |
-| **Goal Bars** | Likes, Follows, Diamonds, Shares, Viewers, Comments — configurable targets |
-| **Overlay: Floating** | Widgets over any app via `SYSTEM_ALERT_WINDOW` — drag to reposition |
-| **Overlay: Camera** | Widgets composited over CameraX preview in-app |
-| **Overlay: Game** | MediaProjection API captures game screen + composites widgets |
-| **Background Mode** | Foreground service keeps TTS/alerts running while TikTok is frontmost |
-| **Notification Controls** | Skip TTS / Clear / Disconnect from notification |
+| TikTok OAuth2 login (no SDK) | ✅ |
+| Live WebSocket event stream | ✅ |
+| Chat messages | ✅ |
+| Gift alerts with tier badges | ✅ |
+| Follow / Share / Like events | ✅ |
+| Viewer count tracking | ✅ |
+| TTS with Android built-in voice | ✅ |
+| TTS with ElevenLabs AI voices | ✅ (API key required) |
+| Claude AI TTS filter | ✅ (API key required) |
+| TTS queue (skip / pause / clear) | ✅ |
+| Per-user voice assignment | ✅ |
+| Stream goal bars | ✅ |
+| Floating overlay widgets | ✅ |
+| Background foreground service | ✅ |
+| Notification controls (Skip/Clear) | ✅ |
+| Session stats dashboard | ✅ |
+
+---
+
+## Requirements
+
+- Android 8.0+ (API 26)
+- A TikTok developer account with an app registered at [developers.tiktok.com](https://developers.tiktok.com)
+- *(Optional)* ElevenLabs API key for AI voices
+- *(Optional)* Anthropic API key for Claude TTS filter
 
 ---
 
 ## Setup
 
-### 1. TikTok Developer Account
+### 1. Clone and switch to this branch
 
-1. Go to https://developers.tiktok.com
-2. Create an app → Products → **Login Kit** + **Live** (request access)
-3. Add `streamvibe://tiktok/callback` as a redirect URI
-4. Copy your **Client Key** and **Client Secret**
-
-### 2. ElevenLabs (optional, for AI voices)
-
-1. Sign up at https://elevenlabs.io
-2. Get your API key from https://elevenlabs.io/profile
-3. Voices are fetched automatically when the app launches
-
-### 3. Anthropic API (for Claude TTS filter)
-
-1. Sign up at https://console.anthropic.com
-2. Create an API key
-3. Uses `claude-haiku-4-5-20251001` (fast + cheap — only used for text sanitization)
-
-### 4. Configure build keys
-
-In `app/build.gradle.kts`, replace the placeholders:
-
-```kotlin
-buildConfigField("String", "TIKTOK_CLIENT_KEY",    "\"your_key_here\"")
-buildConfigField("String", "TIKTOK_CLIENT_SECRET",  "\"your_secret_here\"")
-buildConfigField("String", "ELEVENLABS_API_KEY",    "\"your_key_here\"")
-buildConfigField("String", "CLAUDE_API_KEY",        "\"your_key_here\"")
+```bash
+git clone https://github.com/augesrob/StreamVibeMobile.git
+cd StreamVibeMobile
+git checkout nosdk
 ```
 
-Or better — use local.properties / environment variables via:
+### 2. Add your API keys to `local.properties`
 
-```kotlin
-// In local.properties:
-// tiktok.client.key=your_key
-// tiktok.client.secret=your_secret
-// elevenlabs.api.key=your_key
-// anthropic.api.key=your_key
+Create `local.properties` in the project root (it's gitignored):
 
-val localProps = java.util.Properties()
-localProps.load(rootProject.file("local.properties").inputStream())
-buildConfigField("String", "TIKTOK_CLIENT_KEY", "\"${localProps["tiktok.client.key"]}\"")
+```properties
+tiktok.client.key=YOUR_TIKTOK_CLIENT_KEY
+tiktok.client.secret=YOUR_TIKTOK_CLIENT_SECRET
+elevenlabs.api.key=YOUR_ELEVENLABS_API_KEY
+anthropic.api.key=YOUR_ANTHROPIC_API_KEY
 ```
 
----
+ElevenLabs and Anthropic keys are optional — the app falls back to Android's built-in
+TTS and skips the Claude filter if those keys are blank.
 
-## How It Works
+### 3. Register your redirect URI on TikTok Developer Portal
 
-### TikTok Auth Flow
-
-```
-User taps "Connect TikTok"
-    → Opens TikTok OAuth in Chrome Custom Tab
-    → TikTok redirects to streamvibe://tiktok/callback?code=XXX
-    → MainActivity receives deep link
-    → Broadcasts auth code to ViewModel
-    → ViewModel calls /v2/oauth/token/ to exchange code for access token
-    → Token stored in EncryptedSharedPreferences
-```
-
-### Live Events Flow
+In your TikTok app settings, add this as a redirect URI:
 
 ```
-ViewModel.connectToLive(roomId)
-    → TikTokLiveRepository opens WebSocket to TikTok Webcast endpoint
-    → Events arrive as protobuf binary (or JSON fallback)
-    → Parsed into LiveEvent sealed class
-    → Emitted on SharedFlow
-    → MainViewModel collects → updates session/goals/chat/alerts
-    → TtsEventMapper maps event → TtsQueueItem
-    → TtsEngine processes queue
+streamvibe://tiktok/callback
 ```
 
-### TTS Pipeline
-
-```
-LiveEvent (Gift/Follow/Chat)
-    → TtsEventMapper.map() — check enabled, min diamonds, etc.
-    → TtsEngine.enqueue()
-        1. Blocklist check — skip if blocked word found
-        2. Dedupe — skip if same text spoken within dedupeWindowMs
-        3. Claude filter — sanitize via claude-haiku API call
-        4. Add to priority queue (max maxQueueSize)
-    → Queue processor picks next item
-        → If ElevenLabs voiceId → call ElevenLabs API → play MP3
-        → If Android TTS → speak via TextToSpeech engine
-        → gap between items
-```
-
-### Overlay System
-
-#### Floating Window (over TikTok)
-- Requires `Settings.canDrawOverlays()` permission
-- `OverlayService` creates `ComposeView` instances added via `WindowManager`
-- Each widget is independently draggable
-- Alert banner, goal bar, chat overlay, viewer count, coin counter, gifters
-
-#### In-App Camera Overlay
-- CameraX `PreviewView` in a `Box` with Compose overlays on top
-- No special permission needed beyond `CAMERA`
-
-#### Game Stream Capture
-- `MediaProjection` API creates `VirtualDisplay`
-- Record screen → encode with `MediaCodec` → RTMP push to TikTok stream key
-- Widgets composited before encode
-
----
-
-## Project Structure
-
-```
-app/src/main/java/com/streamvibe/mobile/
-├── MainActivity.kt              — Entry point, nav, TikTok OAuth deep link
-├── StreamVibeApp.kt             — Hilt application + DI module
-├── data/
-│   ├── tiktok/
-│   │   └── TikTokRepository.kt  — Auth + Live WebSocket
-│   └── tts/
-│       └── TtsEngine.kt         — TTS engine, Claude filter, ElevenLabs, queue
-├── domain/
-│   └── model/
-│       └── Models.kt            — All data models
-├── service/
-│   ├── StreamService.kt         — Background foreground service
-│   └── OverlayService.kt        — Floating window overlay service
-└── ui/
-    ├── MainViewModel.kt         — Central state management
-    └── screens/
-        └── Screens.kt           — All 7 screens (Login, Dashboard, Chat, Alerts, Goals, TTS, Overlay, Settings)
-```
-
----
-
-## Permissions Required
-
-| Permission | Why |
-|---|---|
-| `INTERNET` | TikTok WebSocket + TTS APIs |
-| `SYSTEM_ALERT_WINDOW` | Floating overlay widgets |
-| `CAMERA` | In-app camera stream with overlay |
-| `RECORD_AUDIO` | Screen/game capture with audio |
-| `FOREGROUND_SERVICE` | Background stream service |
-| `WAKE_LOCK` | Keep stream alive during long sessions |
-| `POST_NOTIFICATIONS` | Stream status notification |
-
----
-
-## TikTok API Scopes Requested
-
-- `user.info.basic` — display name, avatar
-- `live.room.info` — room ID lookup
-- `live.room.message` — WebSocket events (gifts, follows, chat)
-
-Note: `live.room.message` requires TikTok approval. Apply via developer portal.
-
----
-
-## TTS Filter — Claude vs TikFinity
-
-| Feature | TikFinity | StreamVibe |
-|---|---|---|
-| Spam filter | Basic length check | Claude AI — detects repeated chars, gibberish |
-| Emoji handling | Reads emoji codes verbatim | Converts to natural words |
-| URL handling | Reads full URL | Removes URLs completely |
-| Username normalization | Reads literally | Normalizes numbers (xX99Xx → "ninety nine") |
-| Blocklist | Word list | Word list + Claude catches variations |
-| Queue | FIFO | Priority queue (gift tier > follow > chat) |
-| Skip/Clear | App only | App + notification controls |
-| Per-user voices | ❌ | ✅ ElevenLabs voice per username |
-| AI voices | ❌ | ✅ ElevenLabs |
-| Dedupe | Basic | Time-window based (configurable ms) |
-
----
-
-## Building
+### 4. Build
 
 ```bash
 ./gradlew assembleDebug
 ```
 
-For signed release (CI/CD):
-```bash
-./gradlew assembleRelease \
-  -Pandroid.injected.signing.store.file=$KEYSTORE_PATH \
-  -Pandroid.injected.signing.store.password=$KEYSTORE_PASSWORD \
-  -Pandroid.injected.signing.key.alias=$KEY_ALIAS \
-  -Pandroid.injected.signing.key.password=$KEY_PASSWORD
+APK will be at `app/build/outputs/apk/debug/app-debug.apk`.
+
+---
+
+## How auth works (no SDK)
+
 ```
+User taps "Connect with TikTok"
+  ↓
+App builds PKCE OAuth2 URL and opens it in the user's browser
+  ↓
+User logs in on TikTok's website
+  ↓
+TikTok redirects to: streamvibe://tiktok/callback?code=XXX
+  ↓
+Android routes the deep link back to MainActivity
+  ↓
+App exchanges the code for an access token via POST to TikTok API
+  ↓
+Token stored in EncryptedSharedPreferences
+  ↓
+WebSocket opens to webcast.tiktok.com — live events start flowing
+```
+
+No SDK, no Play Store listing required to test. The OAuth flow works in any browser.
+
+---
+
+## GitHub Actions — Auto APK build
+
+Every push to this branch triggers `.github/workflows/build.yml` which:
+
+1. Builds a **debug APK** (every push)
+2. Builds a **signed release APK** (pushes to `nosdk` only — requires secrets)
+3. Uploads both as **downloadable artifacts** in the Actions tab
+
+To enable signed release builds, add these secrets in
+**GitHub → Settings → Secrets → Actions**:
+
+| Secret | Description |
+|---|---|
+| `TIKTOK_CLIENT_KEY` | From TikTok Developer Portal |
+| `TIKTOK_CLIENT_SECRET` | From TikTok Developer Portal |
+| `ELEVENLABS_API_KEY` | From elevenlabs.io (optional) |
+| `ANTHROPIC_API_KEY` | From console.anthropic.com (optional) |
+| `KEYSTORE_BASE64` | Base64-encoded `streamvibe.keystore` |
+| `KEYSTORE_PASSWORD` | Keystore password |
+| `KEY_ALIAS` | Key alias (`streamvibe`) |
+| `KEY_PASSWORD` | Key password |
+
+---
+
+## Project structure
+
+```
+app/src/main/java/com/streamvibe/mobile/
+├── MainActivity.kt              # Entry point, deep link handler
+├── StreamVibeApp.kt             # Hilt application + OkHttp provider
+├── data/
+│   ├── tiktok/
+│   │   ├── TikTokAuthRepository.kt  # OAuth2 PKCE — no SDK
+│   │   └── TikTokLiveRepository.kt  # WebSocket events — no SDK
+│   └── tts/
+│       └── TtsEngine.kt         # Android TTS + ElevenLabs + Claude filter
+├── domain/model/
+│   └── Models.kt                # LiveEvent, TikTokUser, Goals, etc.
+├── service/
+│   ├── StreamService.kt         # Foreground service (background TTS)
+│   └── OverlayService.kt        # Floating overlay widgets
+└── ui/
+    ├── MainViewModel.kt         # All state management
+    └── screens/
+        └── Screens.kt           # All 7 Compose UI screens
+```
+
+---
+
+## Differences from `main` branch
+
+| | `main` | `nosdk` |
+|---|---|---|
+| TikTok Open SDK | ✅ Required | ❌ Removed |
+| ByteDance Maven repo | ✅ Required | ❌ Removed |
+| Play Store listing needed | Yes (for SDK) | No |
+| Auth method | SDK `TikTokOpenApiActivity` | Browser + deep link |
+| WebSocket | SDK wrapper | Direct OkHttp |
+| APK size | Larger (SDK bundled) | Smaller |
+
+---
+
+## License
+
+MIT — see [LICENSE](LICENSE) if present.
