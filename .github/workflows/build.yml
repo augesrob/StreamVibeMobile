@@ -80,16 +80,16 @@ jobs:
       - name: Rename APK
         run: |
           mv app/build/outputs/apk/release/app-release.apk \
-             app/build/outputs/apk/release/streamvibe-${{ steps.version.outputs.tag }}.apk
+             "app/build/outputs/apk/release/StreamVibe Mobile-${{ steps.version.outputs.tag }}.apk"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version.outputs.tag }}
-          name: "StreamVibe ${{ steps.version.outputs.tag }}"
+          name: "StreamVibe Mobile ${{ steps.version.outputs.tag }}"
           body: |
             Auto-built from commit ${{ github.sha }}
             **Changes:** ${{ github.event.head_commit.message }}
-          files: app/build/outputs/apk/release/streamvibe-${{ steps.version.outputs.tag }}.apk
+          files: "app/build/outputs/apk/release/StreamVibe Mobile-${{ steps.version.outputs.tag }}.apk"
           draft: false
           prerelease: false

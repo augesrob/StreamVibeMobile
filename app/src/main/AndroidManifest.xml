@@ -27,11 +27,6 @@
     <!-- ── Post notifications ── -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
-    <!-- Android 11+ package visibility — required for TikTok SDK to detect TikTok app -->
-    <queries>
-        <package android:name="com.zhiliaoapp.musically" />
-        <package android:name="com.ss.android.ugc.trill" />
-    </queries>
 
     <application
         android:name=".StreamVibeApp"
@@ -64,10 +59,6 @@
                 <data android:scheme="streamvibe" android:host="tiktok" android:path="/callback" />
             </intent-filter>
 
-            <!-- TikTok SDK callback -->
-            <meta-data
-                android:name="com.tiktok.sdk.AppId"
-                android:value="${tikTokClientKey}" />
         </activity>
 
         <!-- ── Background Stream Service (keeps TTS/alerts alive while TikTok is foreground) ── -->
