@@ -92,7 +92,7 @@ fun StreamVibeApp() {
 
     if (user == null) {
         LoginScreen(onTikTokLogin = {
-            val tikTokAuthUrl = buildTikTokAuthUrl()
+            val tikTokAuthUrl = vm.authRepo.buildAuthUrl()
             val intent = Intent(Intent.ACTION_VIEW, Uri.parse(tikTokAuthUrl))
             context.startActivity(intent)
         })
@@ -257,16 +257,5 @@ fun StreamVibeTheme(content: @Composable () -> Unit) {
     )
 }
 
-// ─── TikTok OAuth URL Builder ─────────────────────────────────────────────────
-fun buildTikTokAuthUrl(): String {
-    val clientKey = BuildConfig.TIKTOK_CLIENT_KEY
-    val redirectUri = Uri.encode(BuildConfig.TIKTOK_REDIRECT_URI)
-    // Scopes needed: user.info.basic + live.room.info + live.room.message
-    val scopes = Uri.encode("user.info.basic,live.room.info,live.room.message")
-    val state = System.currentTimeMillis().toString()
-    return "https://www.tiktok.com/v2/auth/authorize/?" +
-        "client_key=$clientKey&response_type=code&scope=$scopes" +
-        "&redirect_uri=$redirectUri&state=$state"
-}
 
 

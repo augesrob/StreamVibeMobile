@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- StreamVibe logo foreground — simple diamond/diamond shape -->
+<!-- StreamVibe logo foreground — simple diamond shape -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"
@@ -16,10 +16,9 @@
         android:fillColor="#0A0A0F"
         android:pathData="M54,28 L80,54 L54,80 L28,54 Z" />
 
-    <!-- Center dot -->
-    <circle
+    <!-- Center dot (circle as path, compatible with API 26+) -->
+    <path
         android:fillColor="#00F2EA"
-        android:cx="54"
-        android:cy="54"
-        android:r="8" />
+        android:pathData="M54,46 A8,8 0 1,0 54,62 A8,8 0 1,0 54,46 Z" />
+
 </vector>

@@ -1,10 +1,8 @@
 package com.streamvibe.mobile.data.tiktok
 
 import android.content.Context
-import android.net.Uri
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
-import com.streamvibe.mobile.BuildConfig
 import com.streamvibe.mobile.domain.model.TikTokUser
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
@@ -20,11 +18,12 @@ import javax.inject.Singleton
 
 /**
  * Handles TikTok OAuth2 PKCE auth — NO SDK, pure HTTP.
+ * Client key/secret are entered by the user in Settings, not baked into the APK.
  *
  * Flow:
- *   1. buildAuthUrl()              → open in browser via Intent(ACTION_VIEW)
- *   2. Deep link → MainActivity   → handleIntent() → onTikTokAuthCode(code)
- *   3. exchangeCodeForToken(code)  → stores access token
+ *   1. buildAuthUrl(clientKey)       → open in browser via Intent(ACTION_VIEW)
+ *   2. Deep link → MainActivity      → onTikTokAuthCode(code)
+ *   3. exchangeCodeForToken(code)    → stores access token
  */
 @Singleton
 class TikTokAuthRepository @Inject constructor(
@@ -32,6 +31,10 @@ class TikTokAuthRepository @Inject constructor(
 ) {
     private val client = OkHttpClient()
     private val json   = Json { ignoreUnknownKeys = true; isLenient = true }
+
+    companion object {
+        const val REDIRECT_URI = "streamvibe://tiktok/callback"
+    }
 
     private val prefs by lazy {
         val key = MasterKey.Builder(context)
@@ -46,7 +49,7 @@ class TikTokAuthRepository @Inject constructor(
 
     private var pkceVerifier = ""
 
-    // ── PKCE ─────────────────────────────────────────────────────────────────
+    // ── PKCE helpers ──────────────────────────────────────────────────────────
 
     private fun generateVerifier(): String {
         val b = ByteArray(32).also { SecureRandom().nextBytes(it) }
@@ -58,6 +61,19 @@ class TikTokAuthRepository @Inject constructor(
         return Base64.getUrlEncoder().withoutPadding().encodeToString(d)
     }
 
+    // ── Credential storage (user-supplied via Settings) ───────────────────────
+
+    fun saveClientCredentials(clientKey: String, clientSecret: String) {
+        prefs.edit()
+            .putString("client_key",    clientKey.trim())
+            .putString("client_secret", clientSecret.trim())
+            .apply()
+    }
+
+    fun getClientKey(): String    = prefs.getString("client_key",    "") ?: ""
+    fun getClientSecret(): String = prefs.getString("client_secret", "") ?: ""
+    fun hasClientCredentials(): Boolean = getClientKey().isNotBlank() && getClientSecret().isNotBlank()
+
     // ── Public API ────────────────────────────────────────────────────────────
 
     val isAuthenticated: Boolean get() = prefs.getString("access_token", null) != null
@@ -65,9 +81,9 @@ class TikTokAuthRepository @Inject constructor(
     fun getSavedUser(): TikTokUser? {
         val token = prefs.getString("access_token", null) ?: return null
         return TikTokUser(
-            openId       = prefs.getString("open_id", "") ?: "",
-            displayName  = prefs.getString("display_name", "Streamer") ?: "Streamer",
-            avatarUrl    = prefs.getString("avatar_url", "") ?: "",
+            openId       = prefs.getString("open_id",       "") ?: "",
+            displayName  = prefs.getString("display_name",  "Streamer") ?: "Streamer",
+            avatarUrl    = prefs.getString("avatar_url",    "") ?: "",
             accessToken  = token,
             refreshToken = prefs.getString("refresh_token", "") ?: "",
             expiresAt    = prefs.getLong("expires_at", 0L),
@@ -75,11 +91,11 @@ class TikTokAuthRepository @Inject constructor(
     }
 
     fun buildAuthUrl(): String {
-        pkceVerifier = generateVerifier()
-        val challenge   = generateChallenge(pkceVerifier)
-        val clientKey   = BuildConfig.TIKTOK_CLIENT_KEY
-        val redirectUri = Uri.encode(BuildConfig.TIKTOK_REDIRECT_URI)
-        val scopes      = Uri.encode("user.info.basic,live.room.info,live.room.message")
+        val clientKey = getClientKey()
+        pkceVerifier  = generateVerifier()
+        val challenge  = generateChallenge(pkceVerifier)
+        val redirectUri = android.net.Uri.encode(REDIRECT_URI)
+        val scopes      = android.net.Uri.encode("user.info.basic,live.room.info,live.room.message")
         val state       = System.currentTimeMillis().toString()
         return "https://www.tiktok.com/v2/auth/authorize/?" +
                "client_key=$clientKey&response_type=code&scope=$scopes" +
@@ -91,11 +107,11 @@ class TikTokAuthRepository @Inject constructor(
         withContext(Dispatchers.IO) {
             runCatching {
                 val body = FormBody.Builder()
-                    .add("client_key",    BuildConfig.TIKTOK_CLIENT_KEY)
-                    .add("client_secret", BuildConfig.TIKTOK_CLIENT_SECRET)
+                    .add("client_key",    getClientKey())
+                    .add("client_secret", getClientSecret())
                     .add("code",          code)
                     .add("grant_type",    "authorization_code")
-                    .add("redirect_uri",  BuildConfig.TIKTOK_REDIRECT_URI)
+                    .add("redirect_uri",  REDIRECT_URI)
                     .add("code_verifier", pkceVerifier)
                     .build()
                 val resp = client.newCall(
@@ -108,9 +124,9 @@ class TikTokAuthRepository @Inject constructor(
                     .jsonObject["data"]?.jsonObject
                     ?: throw IOException("Bad token response")
 
-                val token  = data["access_token"]!!.jsonPrimitive.content
-                val openId = data["open_id"]?.jsonPrimitive?.content ?: ""
-                val expiry = data["expires_in"]?.jsonPrimitive?.longOrNull ?: 0L
+                val token   = data["access_token"]!!.jsonPrimitive.content
+                val openId  = data["open_id"]?.jsonPrimitive?.content ?: ""
+                val expiry  = data["expires_in"]?.jsonPrimitive?.longOrNull ?: 0L
                 val refresh = data["refresh_token"]?.jsonPrimitive?.content ?: ""
 
                 prefs.edit()
@@ -120,7 +136,6 @@ class TikTokAuthRepository @Inject constructor(
                     .putLong("expires_at", System.currentTimeMillis() + expiry * 1000)
                     .apply()
 
-                // Fetch user info
                 fetchUserInfo(token, openId)
             }
         }
@@ -160,5 +175,8 @@ class TikTokAuthRepository @Inject constructor(
             }
         }
 
-    fun logout() = prefs.edit().clear().apply()
+    fun logout() = prefs.edit()
+        .remove("access_token").remove("open_id").remove("refresh_token")
+        .remove("expires_at").remove("display_name").remove("avatar_url")
+        .apply()
 }
