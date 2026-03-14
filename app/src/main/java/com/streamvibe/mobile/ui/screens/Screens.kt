@@ -1,3 +1,4 @@
+@file:OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 package com.streamvibe.mobile.ui.screens
 
 import androidx.compose.animation.*

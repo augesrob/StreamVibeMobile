@@ -34,7 +34,7 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             StreamVibeTheme {
-                StreamVibeApp()
+                StreamVibeMainApp()
             }
         }
 
@@ -65,7 +65,7 @@ class MainActivity : ComponentActivity() {
 // App Composable
 // ─────────────────────────────────────────────────────────────────────────────
 @Composable
-fun StreamVibeApp() {
+fun StreamVibeMainApp() {
     val vm: MainViewModel = hiltViewModel()
     val user by vm.user.collectAsState()
     val activeAlert by vm.activeAlert.collectAsState()
