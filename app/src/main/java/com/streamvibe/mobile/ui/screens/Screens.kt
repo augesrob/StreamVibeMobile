@@ -770,12 +770,50 @@ fun SettingsScreen(vm: MainViewModel, onConnectLive: (String) -> Unit) {
         }
 
         item {
+            SectionTitle("TikTok Developer Credentials")
+            SettingsCard {
+                Text("Enter your TikTok Developer App credentials. Get them from developers.tiktok.com", fontSize = 12.sp, color = TextMuted, lineHeight = 16.sp)
+                Spacer(Modifier.height(8.dp))
+                var clientKey by remember { mutableStateOf(vm.authRepo.getClientKey()) }
+                var clientSecret by remember { mutableStateOf(vm.authRepo.getClientSecret()) }
+                var saved by remember { mutableStateOf(false) }
+                OutlinedTextField(
+                    value = clientKey,
+                    onValueChange = { clientKey = it; saved = false },
+                    label = { Text("Client Key") },
+                    placeholder = { Text("e.g. aw1234abc56789...") },
+                    modifier = Modifier.fillMaxWidth(), singleLine = true,
+                    colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Cyan, unfocusedBorderColor = BgBorder, focusedTextColor = TextPrim, unfocusedTextColor = TextPrim, focusedLabelColor = Cyan),
+                )
+                Spacer(Modifier.height(6.dp))
+                OutlinedTextField(
+                    value = clientSecret,
+                    onValueChange = { clientSecret = it; saved = false },
+                    label = { Text("Client Secret") },
+                    placeholder = { Text("e.g. abc123...") },
+                    modifier = Modifier.fillMaxWidth(), singleLine = true,
+                    visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                    colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Cyan, unfocusedBorderColor = BgBorder, focusedTextColor = TextPrim, unfocusedTextColor = TextPrim, focusedLabelColor = Cyan),
+                )
+                Spacer(Modifier.height(8.dp))
+                Button(
+                    onClick = {
+                        vm.authRepo.saveClientCredentials(clientKey, clientSecret)
+                        saved = true
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(containerColor = if (saved) Mint.copy(0.2f) else Cyan.copy(0.2f)),
+                ) { Text(if (saved) "✓ Saved" else "Save Credentials", color = if (saved) Mint else Cyan) }
+            }
+        }
+
+        item {
             SectionTitle("About")
             SettingsCard {
                 SettingInfoRow("App", "StreamVibe Mobile — Alerts & TTS")
                 SettingInfoRow("Version", "1.0.0")
                 SettingInfoRow("Project", "drvn-empire / StreamVibe")
-                SettingInfoRow("TikTok SDK", "Login Kit OAuth 2.0")
+                SettingInfoRow("Auth", "OAuth 2.0 PKCE (no SDK)")
                 SettingInfoRow("TTS Voices", "Android + ElevenLabs")
                 SettingInfoRow("Filter", "Claude AI Pipeline")
             }
